@@ -1,0 +1,6 @@
+.vs
+*.suo
+ipch
+*.user
+bin
+obj

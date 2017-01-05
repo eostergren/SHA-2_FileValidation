@@ -1,0 +1,8 @@
+--style=allman
+--recursive
+--indent=spaces=4
+--add-brackets
+--convert-tabs
+--suffix=none
+--lineend=windows 
+indent-switches     # cannot do this on the command line
