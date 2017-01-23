@@ -4,3 +4,5 @@ ipch
 *.user
 bin
 obj
+*.tmp
+*.pfx

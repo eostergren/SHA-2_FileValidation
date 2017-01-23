@@ -20,65 +20,47 @@ public class FileValidation
 
     public FileValidation(string SearchPath)
     {
-        m_SearchPathRoot = SearchPath;
-        m_DirInfo = new DirectoryInfo(m_SearchPathRoot);
+        m_SearchPath = SearchPath;
+        m_DirInfo = new DirectoryInfo(m_SearchPath);
     }
 
     #endregion Constructors
 
     #region Public Methods
 
-    public void Generate(List<string> FileExtensions)
+    public void run(string[] cmd_vals, Action purpose )
     {
         TotalFileCount = 0;
         TotalDirectoryCount = 0;
+        sm_purpose = purpose;
         List<string> OutputMessages = new List<string>();
-        string header = ("Generate SHA2 using :");
-        foreach(string ext in FileExtensions)
+        string header = HeaderText;
+        foreach(var arg in cmd_vals)
         {
-            header += " " + ext + " ";
+            header += " " + arg + " ";
         }
         OutputMessages.Add(header);
-        CreateOutputFile(OutputMessages);
-        AppendOutputFile(GenerateRecursive(FileExtensions));
-        OutputMessages.Clear();
-        string summary = end_line + String.Format("{0:d} Directories found, {1:d} Files processed", TotalDirectoryCount, TotalFileCount);
-        OutputMessages.Add(summary);
-        Console.WriteLine(summary);
-        AppendOutputFile(OutputMessages);
-    }
 
-    public void Verify(List<string> FileExtensions)
-    {
-        TotalFileCount = 0;
-        TotalDirectoryCount = 0;
-        List<string> OutputMessages = new List<string>();
-        string header = ("Validate SHA2 using :");
-        foreach (string ext in FileExtensions)
+        CreateOutputFile(OutputMessages);
+
+        ActionMethod action = null;
+        switch (purpose)
         {
-            header += " " + ext + " ";
+            case Action.compare:
+                action = CompareRoot;
+                break;
+            case Action.generate:
+                action = GenerateRecursive;
+                break;
+            case Action.validate:
+                action = RecursiveVerify;
+                break;
+            default:
+                return;
         }
-        OutputMessages.Add(header);
-        CreateOutputFile(OutputMessages);
-        AppendOutputFile(RecursiveVerify(FileExtensions));
-        string summary = end_line + String.Format("{0:d} Directories found, {1:d} Files processed", TotalDirectoryCount, TotalFileCount);
+        AppendOutputFile(action(cmd_vals));
         OutputMessages.Clear();
-        OutputMessages.Add(summary);
-        Console.WriteLine(summary);
-        AppendOutputFile(OutputMessages);
-    }
-
-    public void Compare(string[] FilePath)
-    {
-        TotalFileCount = 0;
-        TotalDirectoryCount = 0;
-        List<string> OutputMessages = new List<string>();
-        string header = "Compare SHA-2 in " + FilePath[1] + " and " + FilePath[2];
-        OutputMessages.Add(header);
-        CreateOutputFile(OutputMessages);
-        AppendOutputFile(RecursiveCompare(FilePath));
-        OutputMessages.Clear();
-        string summary = end_line + string.Format("{0:d} Directories found, {1:d} SHA-2 records compared", TotalDirectoryCount, TotalFileCount);
+        string summary = end_line + string.Format("{0:d} Directories found, {1:d} ", TotalDirectoryCount, TotalFileCount) + SummaryText;
         OutputMessages.Add(summary);
         Console.WriteLine(summary);
         AppendOutputFile(OutputMessages);
@@ -88,7 +70,7 @@ public class FileValidation
 
     #region Private Methods
 
-    private List<string> GenerateRecursive(List<string> FileExtensions)
+    private List<string> GenerateRecursive(string[] FileExtensions)
     {
         List<string> SHA2Errors = new List<string>();
         try
@@ -110,7 +92,7 @@ public class FileValidation
             {
                 SHA256Cng ShaHashGenerator = new SHA256Cng();
                 byte[] hashValue;
-                Console.WriteLine(end_line + "Generate SHA2 for {0:d} files found in " + m_SearchPathRoot, FileCountInFolder);
+                Console.WriteLine(end_line + "Generate SHA2 for {0:d} files found in " + m_SearchPath, FileCountInFolder);
                 using (StreamWriter OutFile = File.CreateText(SHA2_filename))
                 {
                     OutFile.WriteLine(m_DirInfo.FullName + "    " + DateTime.Now.ToLocalTime().ToString() + end_line);
@@ -163,7 +145,7 @@ public class FileValidation
         return SHA2Errors;
     }
 
-    private List<string> RecursiveVerify(List<string> FileExtensions)
+    private List<string> RecursiveVerify(string[] FileExtensions)
     {
         List<string> FileErrors = new List<string>();
         try
@@ -178,7 +160,7 @@ public class FileValidation
                 IEnumerable<FileInfo> Files = m_DirInfo.EnumerateFiles(FileMatch);
                 if (Files.Count() > 0)
                 {
-                    Console.WriteLine(end_line + "validating SHA256 for " + m_SearchPathRoot);
+                    Console.WriteLine(end_line + "validating SHA256 for " + m_SearchPath);
                     byte[] hashValue;
 
                     List<string> FoundFiles = new List<string>();
@@ -224,7 +206,7 @@ public class FileValidation
                     {
                         if (!FoundFiles.Contains(FileRecord))
                         {
-                            string error_message = FileRecord + " missing from directory: " + m_SearchPathRoot;
+                            string error_message = FileRecord + " missing from directory: " + m_SearchPath;
                             FileErrors.Add(error_message);
                             Console.Write(error_message);
 
@@ -253,13 +235,58 @@ public class FileValidation
         return FileErrors;
     }
 
-    private List<string> RecursiveCompare(string[] FilePath)
+    private List<string> CompareRoot(string[] FilePath)
     {
         List<string> CompareErrors = new List<string>();
         try
         {
-            // expecting an identical directory tree for the alternate copy
-            string SHA2_alt_filename = SHA2_filename.Replace(FilePath[1], FilePath[2]);
+            // root folders can not contain substring match
+            if (FilePath[0].Contains(FilePath[1]) || FilePath[1].Contains(FilePath[0]))
+            {
+                string msg = ("Root folder names can not be a sub string match:  " + FilePath[0] + " ~ " + FilePath[1]);
+                Console.WriteLine(msg);
+                Console.WriteLine(end_line + "   rename the root folder to eliminate a substring match");
+                CompareErrors.Add(msg);
+                return CompareErrors;
+            }
+
+            if(FilePath[0].Contains(":\\"))
+            {
+                sm_RootPath = FilePath[0];
+                m_SearchPath = sm_RootPath;
+                m_DirInfo = new DirectoryInfo(m_SearchPath);
+            }
+            else
+            {
+                sm_RootPath = m_SearchPath + FilePath[0];
+            }
+
+            if (FilePath[1].Contains(":\\"))
+            {
+                sm_AltRootPath = FilePath[1];
+            }
+            else
+            {
+                sm_AltRootPath = m_SearchPath + FilePath[1];
+            }
+            AppendOutputFile(RecursiveCompare());
+        }
+        catch(Exception e)
+        {
+            CompareErrors.Add(m_DirInfo.FullName);
+            CompareErrors.Add(e.Message);
+            Console.WriteLine(e.Message);
+        }
+        return CompareErrors;
+    }
+
+    private List<string> RecursiveCompare() //string[] FilePath)
+    {
+        // TODO: make sure arg array is good
+        List<string> CompareErrors = new List<string>();
+        try
+        {
+
             if (File.Exists(SHA2_filename))
             {
                 if (File.Exists(SHA2_alt_filename))
@@ -267,7 +294,6 @@ public class FileValidation
                     List<string> FileList = BuildSHA2List(SHA2_filename);
                     List<string> Alt_FileList = BuildSHA2List(SHA2_alt_filename);
                     // make sure this is in the list of protected files
-
                     List<string> MatchedFiles = new List<string>();
                     foreach (string FileRecord in FileList)
                     {
@@ -291,11 +317,11 @@ public class FileValidation
                                     MatchedFiles.Add(Alt_FileRecord);
                                     if (!Alt_FileRecord.Equals(FileRecord))
                                     {
-                                        string errormsg = "SHA2 mismatch found in: " + m_SearchPathRoot + end_line + FileRecord + end_line + Alt_FileRecord + end_line;
+                                        string errormsg = "SHA2 mismatch found in: " + m_SearchPath + end_line + FileRecord + end_line + Alt_FileRecord + end_line;
                                         CompareErrors.Add(errormsg);
                                         Console.WriteLine(errormsg);
                                     }
-                                        break;
+                                    break;
                                 }
                             }
                             if (!found)
@@ -339,7 +365,7 @@ public class FileValidation
                 foreach (DirectoryInfo SubDir in Directories)
                 {
                     FileValidation SubSearch = new FileValidation(SubDir.FullName);
-                    AppendOutputFile(SubSearch.RecursiveCompare(FilePath));
+                    AppendOutputFile(SubSearch.RecursiveCompare()); // FilePath));
                 }
             }
         }
@@ -391,6 +417,8 @@ public class FileValidation
     }
 
     private void AppendOutputFile(List<string> FileErrors)
+
+
     {
         using (StreamWriter sw = File.AppendText(SHA2_ErrorReportFileName))
         {
@@ -423,12 +451,26 @@ public class FileValidation
     {
         get
         {
-            string path = m_SearchPathRoot + @"\SHA2_" + m_DirInfo.Name + ".txt";
+            string path = m_SearchPath + @"\SHA2_" + m_DirInfo.Name + ".txt";
             //if (path.Length > max_filename_length)
             //{ this would will break if content is moved to a shorter path...
             //    path = m_SearchPathRoot + @"\SHA2_use_a_short_name.txt"; ?
             //}
             return path;
+        }
+    }
+
+    private string SHA2_alt_filename
+    {
+        // expecting an identical directory tree for the alternate copy
+        get
+        {
+            if((sm_purpose != Action.compare) || sm_RootPath.Equals(sm_AltRootPath))
+            {
+                return "";
+            }
+            string path = m_SearchPath + @"\SHA2_" + m_DirInfo.Name + ".txt";
+            return path.Replace(sm_RootPath, sm_AltRootPath);
         }
     }
 
@@ -443,6 +485,72 @@ public class FileValidation
             }
             return SHA2_ErrorReport;
         }
+    }
+
+    private string HeaderText
+    {
+        get
+        {
+            switch (sm_purpose)
+            {
+                case Action.compare:
+                    return compare_header;
+                case Action.generate:
+                    return generate_header;
+                case Action.validate:
+                    return validate_header;
+                default:
+                    break;
+            }
+            return end_line;
+        }
+    }
+
+    private string SummaryText
+    {
+        get
+        {
+            switch (sm_purpose)
+            {
+                case Action.compare:
+                    return compare_summary;
+                case Action.generate:
+                    return generate_summary;
+                case Action.validate:
+                    return validate_summary;
+                default:
+                    break;
+            }
+            return end_line;
+        }
+
+    }
+
+    private string SHA2_ErrorReport
+    {
+        get
+        {
+            string name;
+            switch (sm_purpose)
+            {
+                case Action.compare:
+                    name = compare_report;
+                    break;
+                case Action.generate:
+                    name = generate_report;
+                    break;
+                case Action.validate:
+                    name =  validate_report;
+                    break;
+                default:
+                    name = "";
+                    break;
+            }
+            string[] unique_name = DateTime.Now.GetDateTimeFormats('D');
+            name += "_" + unique_name[0] + ".txt";
+            return name;
+        }
+
     }
 
     private int NameOffset
@@ -479,18 +587,34 @@ public class FileValidation
 
     #endregion Private Properties
 
-    #region Member Data
+    public enum Action { none, generate, validate, compare }
 
+    private delegate List<string> ActionMethod(string[] cmd_vals);
+
+    #region Member Data
+    static private Action sm_purpose = Action.none;
     static private int sm_TotalFileCount;
     static private int sm_TotalDirectoryCount;
-    private string m_SearchPathRoot;
+    static private string sm_RootPath = "";
+    static private string sm_AltRootPath = "";
+    private string m_SearchPath = "";
     private DirectoryInfo m_DirInfo;
-    private const string SHA2_ErrorReport = "SHA2_ErrorReport.txt";
     private const string delimiter = "  ...  ";
     private const string end_line = "\r\n";
+    private const string generate_report = "SHA2_Report_Generate_Secure_Hash";
+    private const string validate_report = "SHA2_Report_Validate_Files";
+    private const string compare_report = "SHA2_Report_Compare_Folders";
+    private const string generate_header = "Generate SHA2 using :";
+    private const string validate_header = "Validate SHA2 using :";
+    private const string compare_header = "Compare SHA-2 in ";
+    private const string generate_summary = "Files protected";
+    private const string validate_summary = "Files validated";
+    private const string compare_summary = "SHA2 records compared";
     private const int SHA2_length = 64;
 
     #endregion Member Data
 }
+
+
 
 }
