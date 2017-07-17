@@ -28,6 +28,9 @@ class Program
                 case "-validate":
                     FileTest.run(cmd_vals, FileValidation.Action.validate);
                     break;
+                case "-refresh":
+                    FileTest.run(cmd_vals, FileValidation.Action.refresh);
+                    break;
                 case "-compare":
                     FileTest.run(cmd_vals, FileValidation.Action.compare);
                     break;
@@ -36,6 +39,10 @@ class Program
                     break;
             }
         }
+        else
+        {
+            show_help();
+        }
     }
 
     static private void show_help()
@@ -43,8 +50,8 @@ class Program
         string codeBase = Assembly.GetExecutingAssembly().CodeBase;
         string executable = Path.GetFileName(codeBase);
         string name = executable.ToLower().Replace(".exe", " "); ;
-        Console.WriteLine("To create or verify SHA-2 values starting from the working directory:");
-        Console.WriteLine(name + "[ -generate | -validate ] <extension 1> <extension 2> ... <extension n>\r\n");
+        Console.WriteLine("To create, verfiy, or refresh (verify existing and add new files) SHA-2 values starting from the working directory:");
+        Console.WriteLine(name + "[ -generate | -validate | refresh ] <extension 1> <extension 2> ... <extension n>\r\n");
         // -compare is useful only when the -generate option is run against two copies of the same data
         // to determine if one set is corrupted before SHA-2 generation...
         Console.WriteLine("To compare SHA-2 record files for two file sets:");

@@ -22,27 +22,29 @@ public class FileValidation
     {
         m_SearchPath = SearchPath;
         m_DirInfo = new DirectoryInfo(m_SearchPath);
+        m_FirstWrite = true;
     }
 
     #endregion Constructors
 
     #region Public Methods
 
-    public void run(string[] cmd_vals, Action purpose )
+    public void run(string[] cmd_vals, Action purpose)
     {
         TotalFileCount = 0;
         TotalDirectoryCount = 0;
+        sm_AppendNewFiles = false;
         sm_purpose = purpose;
         List<string> OutputMessages = new List<string>();
         string header = HeaderText;
-        foreach(var arg in cmd_vals)
+        foreach (var arg in cmd_vals)
         {
             header += " " + arg + " ";
         }
+        header += end_line;
+
         OutputMessages.Add(header);
-
         CreateOutputFile(OutputMessages);
-
         ActionMethod action = null;
         switch (purpose)
         {
@@ -55,12 +57,16 @@ public class FileValidation
             case Action.validate:
                 action = RecursiveVerify;
                 break;
+            case Action.refresh:
+                sm_AppendNewFiles = true;
+                action = RecursiveVerify;
+                break;
             default:
                 return;
         }
         AppendOutputFile(action(cmd_vals));
         OutputMessages.Clear();
-        string summary = end_line + string.Format("{0:d} Directories found, {1:d} ", TotalDirectoryCount, TotalFileCount) + SummaryText;
+        string summary = end_line + string.Format("{0:d} Directories found, {1:d} files", TotalDirectoryCount, TotalFileCount) + SummaryText;
         OutputMessages.Add(summary);
         Console.WriteLine(summary);
         AppendOutputFile(OutputMessages);
@@ -135,15 +141,57 @@ public class FileValidation
                 }
             }
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             // does the user have permissions to access this directory ?
             SHA2Errors.Add(m_DirInfo.FullName);
-            SHA2Errors.Add( e.Message);
+            SHA2Errors.Add(e.Message);
             Console.WriteLine(e.Message);
         }
         return SHA2Errors;
     }
+
+    /// <summary>
+
+
+    private void AddNewFile(FileInfo fInfo)
+    {
+        SHA256Cng ShaHashGenerator = new SHA256Cng();
+        byte[] hashValue;
+        if (File.Exists(SHA2_filename))
+        {
+            // TODO - may add support to add new types later on
+            FileAttributes curAttributes = File.GetAttributes(SHA2_filename);
+            File.SetAttributes(SHA2_filename, curAttributes & ~FileAttributes.ReadOnly);
+        }
+
+
+        using (StreamWriter OutFile = File.AppendText(SHA2_filename))
+        {
+            if (m_FirstWrite)
+            {
+                m_FirstWrite = false;
+                OutFile.WriteLine(end_line + m_DirInfo.FullName + "    " + DateTime.Now.ToLocalTime().ToString() + end_line);
+            }
+            using (FileStream InFile = File.OpenRead(fInfo.FullName))
+            {
+                InFile.Position = 0;
+                hashValue = ShaHashGenerator.ComputeHash(InFile);
+                string LineRecord = ByteArrayToString(hashValue) + delimiter + fInfo.Name;
+                OutFile.WriteLine(LineRecord);
+                // Console.WriteLine(LineRecord);
+                ++TotalFileCount;
+            }
+            FileAttributes curAttributes = File.GetAttributes(fInfo.FullName);
+            File.SetAttributes(fInfo.FullName, curAttributes | FileAttributes.ReadOnly);
+        }
+        if (File.Exists(SHA2_filename))
+        {
+            FileAttributes Attributes = File.GetAttributes(SHA2_filename);
+            File.SetAttributes(SHA2_filename, Attributes | FileAttributes.ReadOnly);
+        }
+    }
+
 
     private List<string> RecursiveVerify(string[] FileExtensions)
     {
@@ -152,7 +200,8 @@ public class FileValidation
         {
             SHA256Cng SHA2HashGenerator = new SHA256Cng();
             List<string> FileList = BuildSHA2List(SHA2_filename);
-
+            List<string> FoundFiles = new List<string>();
+            bool show_folder_name = true;
             foreach (string Extension in FileExtensions)
             {
                 // process only those files we care about
@@ -160,10 +209,13 @@ public class FileValidation
                 IEnumerable<FileInfo> Files = m_DirInfo.EnumerateFiles(FileMatch);
                 if (Files.Count() > 0)
                 {
-                    Console.WriteLine(end_line + "validating SHA256 for " + m_SearchPath);
-                    byte[] hashValue;
+                    if(show_folder_name)
+                    {
+                        Console.WriteLine(end_line + "validating SHA256 for " + m_SearchPath);
+                        show_folder_name = false;
+                    }
 
-                    List<string> FoundFiles = new List<string>();
+                    byte[] hashValue;
                     foreach (FileInfo fInfo in Files)
                     {
                         // make sure this is in the list of protected files
@@ -197,20 +249,50 @@ public class FileValidation
                         }
                         if (!found)
                         {
-                            string error_message = fInfo.Name + " not found in record file: " + SHA2_filename;
+                            string error_message;
+                            if (sm_AppendNewFiles)
+                            {
+                                error_message = fInfo.Name + " added new file into SHA2 record file: " + SHA2_filename;
+                                AddNewFile(fInfo);
+                            }
+                            else
+                            {
+                                error_message = fInfo.Name + " file not found in SHA2 record file: " + SHA2_filename;
+                            }
                             FileErrors.Add(error_message);
                             Console.WriteLine(error_message);
                         }
                     }
-                    foreach(string FileRecord in FileList)
-                    {
-                        if (!FoundFiles.Contains(FileRecord))
-                        {
-                            string error_message = FileRecord + " missing from directory: " + m_SearchPath;
-                            FileErrors.Add(error_message);
-                            Console.Write(error_message);
 
+                }
+            }
+            foreach (string FileRecord in FileList)
+            {
+                bool include_file = false;
+                // check if any records in the SHA2 file were not found
+                if (!FoundFiles.Contains(FileRecord))
+                {
+                    foreach (string Ext in FileExtensions)
+                    {
+                        // test if the file not found was included in the search
+                        if(FileRecord.EndsWith(Ext))
+                        {
+                            // make note it was in the search, but not found
+                            include_file = true;
+                            break;
                         }
+                    }
+                    if (include_file)
+                    {
+                        string error_message = FileRecord + " missing from directory: " + m_SearchPath;
+                        FileErrors.Add(error_message);
+                        Console.Write(error_message);
+                    }
+                    else
+                    {
+                        string error_message = FileRecord + " SHA2 protected file not validated in " + m_SearchPath;
+                        FileErrors.Add(error_message);
+                        Console.Write(error_message);
                     }
                 }
             }
@@ -539,6 +621,9 @@ public class FileValidation
                 case Action.generate:
                     name = generate_report;
                     break;
+                case Action.refresh:
+                    name = refresh_report;
+                    break;
                 case Action.validate:
                     name =  validate_report;
                     break;
@@ -587,7 +672,7 @@ public class FileValidation
 
     #endregion Private Properties
 
-    public enum Action { none, generate, validate, compare }
+    public enum Action { none, generate, validate, refresh, compare }
 
     private delegate List<string> ActionMethod(string[] cmd_vals);
 
@@ -595,6 +680,8 @@ public class FileValidation
     static private Action sm_purpose = Action.none;
     static private int sm_TotalFileCount;
     static private int sm_TotalDirectoryCount;
+    static private bool sm_AppendNewFiles;
+    static private bool m_FirstWrite;
     static private string sm_RootPath = "";
     static private string sm_AltRootPath = "";
     private string m_SearchPath = "";
@@ -603,6 +690,7 @@ public class FileValidation
     private const string end_line = "\r\n";
     private const string generate_report = "SHA2_Report_Generate_Secure_Hash";
     private const string validate_report = "SHA2_Report_Validate_Files";
+    private const string refresh_report = "SHA2_Report_Refresh_Files";
     private const string compare_report = "SHA2_Report_Compare_Folders";
     private const string generate_header = "Generate SHA2 using :";
     private const string validate_header = "Validate SHA2 using :";
